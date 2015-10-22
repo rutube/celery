@@ -414,30 +414,40 @@ class Request(object):
                  {'id': self.id, 'name': self.name,
                   'exc': exc_info.exception})
 
-    def on_failure(self, exc_info):
+    def on_failure(self, exc_info, send_failed_event=True):
         """Handler called if the task raised an exception."""
         task_ready(self)
-        send_failed_event = True
+        if isinstance(exc_info.exception, MemoryError):
+            raise MemoryError('Process got: %s' % (exc_info.exception,))
+        elif isinstance(exc_info.exception, Reject):
+            return self.reject(requeue=exc_info.exception.requeue)
+        elif isinstance(exc_info.exception, Ignore):
+            return self.acknowledge()
 
-        if not exc_info.internal:
-            exc = exc_info.exception
+        exc = exc_info.exception
 
-            if isinstance(exc, Retry):
-                return self.on_retry(exc_info)
+        if isinstance(exc, Retry):
+            return self.on_retry(exc_info)
 
-            # These are special cases where the process would not have had
-            # time to write the result.
-            if self.store_errors:
-                if isinstance(exc, WorkerLostError):
-                    self.task.backend.mark_as_failure(
-                        self.id, exc, request=self,
-                    )
-                elif isinstance(exc, Terminated):
-                    self._announce_revoked(
-                        'terminated', True, string(exc), False)
-                    send_failed_event = False  # already sent revoked event
-            # (acks_late) acknowledge after result stored.
-            if self.task.acks_late:
+        # These are special cases where the process would not have had
+        # time to write the result.
+        if self.store_errors:
+            if isinstance(exc, WorkerLostError):
+                self.task.backend.mark_as_failure(
+                    self.id, exc, request=self,
+                )
+            elif isinstance(exc, Terminated):
+                self._announce_revoked(
+                    'terminated', True, string(exc), False)
+                send_failed_event = False  # already sent revoked event
+        # (acks_late) acknowledge after result stored.
+        if self.task.acks_late:
+            reject_and_requeue = (self.task.reject_on_worker_lost and
+                isinstance(exc, WorkerLostError) and
+                self.delivery_info.get('redelivered', False) is False)
+            if reject_and_requeue:
+                self.reject(requeue=True)
+            else:
                 self.acknowledge()
         self._log_error(exc_info, send_failed_event=send_failed_event)
 
