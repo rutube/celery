@@ -229,6 +229,7 @@ class test_Request(AppCase):
         return Request(
             body_from_sig(self.app, sig),
             on_ack=Mock(),
+            on_reject=Mock(name='on_reject'),
             eventer=Mock(),
             app=self.app,
             connection_errors=(socket.error, ),
@@ -294,6 +295,20 @@ class test_Request(AppCase):
         req = self.get_request(self.add.s(2, 2))
         req._log_error(einfo)
         req.on_ack.assert_called_with(req_logger, req.connection_errors)
+
+    def test_on_failure_WrokerLostError_rejects_with_requeue(self):
+        einfo = None
+        try:
+            raise WorkerLostError()
+        except:
+            einfo = ExceptionInfo(internal=True)
+        req = self.get_request(self.add.s(2, 2))
+        req.task.acks_late = True
+        req.task.reject_on_worker_lost = True
+        req.delivery_info['redelivered'] = False
+        req.on_failure(einfo)
+        req.on_reject.assert_called_with(req_logger,
+            req.connection_errors, True)
 
     def test_tzlocal_is_cached(self):
         req = self.get_request(self.add.s(2, 2))
