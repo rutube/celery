@@ -215,7 +215,8 @@ class EventDispatcher(object):
                 headers=self.headers,
             )
 
-    def send(self, type, blind=False, **fields):
+    def send(self, type, blind=False, utcoffset=utcoffset, retry=False,
+             retry_policy=None, Event=Event, **fields):
         """Send event.
 
         :param type: Event type name, with group separated by dash (`-`).
@@ -235,7 +236,9 @@ class EventDispatcher(object):
             if groups and group_from(type) not in groups:
                 return
             try:
-                self.publish(type, fields, self.producer, blind)
+                self.publish(type, fields, self.producer, retry=retry,
+                             retry_policy=retry_policy, blind=blind,
+                             utcoffset=utcoffset, Event=Event)
             except Exception as exc:
                 if not self.buffer_while_offline:
                     raise
