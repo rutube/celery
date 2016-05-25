@@ -426,20 +426,30 @@ class Request(object):
             if isinstance(exc, Retry):
                 return self.on_retry(exc_info)
 
+            reject_and_requeue = (
+                self.task.reject_on_worker_lost and
+                isinstance(exc, WorkerLostError) and
+                (self.delivery_info.get('redelivered', False) is False or
+                 self.task.reject_on_worker_lost_force))
+
             # These are special cases where the process would not have had
             # time to write the result.
             if self.store_errors:
                 if isinstance(exc, WorkerLostError):
-                    self.task.backend.mark_as_failure(
-                        self.id, exc, request=self,
-                    )
+                    if not reject_and_requeue:
+                        self.task.backend.mark_as_failure(
+                            self.id, exc, request=self,
+                        )
                 elif isinstance(exc, Terminated):
                     self._announce_revoked(
                         'terminated', True, string(exc), False)
                     send_failed_event = False  # already sent revoked event
             # (acks_late) acknowledge after result stored.
             if self.task.acks_late:
-                self.acknowledge()
+                if reject_and_requeue:
+                    self.reject(requeue=True)
+                else:
+                    self.acknowledge()
         self._log_error(exc_info, send_failed_event=send_failed_event)
 
     def _log_error(self, einfo, send_failed_event=True):
